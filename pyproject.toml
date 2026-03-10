@@ -19,11 +19,16 @@ dependencies = [
     "celery==5.5.3",
     "redis==6.4.0",
     "flower",
-    "openpyxl==3.1.5"
+    "openpyxl==3.1.5",
+    "PyYAML==6.0.3"
 ]
 
 [project.scripts]
 aidrin = "aidrin.headless.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["aidrin*"]
+exclude = ["demos*", "tests*"]
 
 [tool.setuptools.dynamic]
 version = {attr = "aidrin._version.__version__"}
