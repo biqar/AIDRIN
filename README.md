@@ -37,8 +37,6 @@ aidrin batch config.json -v
 
 **CLI Options:**
 - `-v, --verbose` - Show progress and timing for each metric
-- `--no-viz` - Strip visualization data from output (faster, smaller output)
-- `--no-save-images` - Don't save visualization images to disk
 
 ### Python API
 
@@ -76,18 +74,17 @@ results = run_batch_metrics(config, verbose=True, strip_visualizations=True)
 | data_quality | completeness | Column completeness scores | - |
 | data_quality | duplicity | Dataset duplicity ratio | - |
 | data_quality | outliers | Outlier proportions for numerical columns | - |
-| correlation | correlations | Categorical and numerical correlation matrices | columns |
-| correlation | feature_relevance | Feature relevance using Pearson correlation | cat_columns, num_columns, target_column |
-| fairness | class_imbalance | Class imbalance degree and distribution | target_column |
-| fairness | statistical_rates | Statistical rates across sensitive groups | y_true_column, sensitive_attribute_column |
-| fairness | representation_rate | Representation rate ratios | columns |
-| privacy | k_anonymity | k-anonymity score | quasi_identifiers |
-| privacy | l_diversity | l-diversity score | quasi_identifiers, sensitive_column |
-| privacy | t_closeness | t-closeness score | quasi_identifiers, sensitive_column |
-| privacy | entropy_risk | Entropy risk score | quasi_identifiers |
-| privacy | single_attribute_risk | Single attribute Markov-model risk | id_column, eval_columns |
-| privacy | multiple_attribute_risk | Multiple attribute Markov-model risk | id_column, eval_columns |
-| privacy | differential_privacy | Differential privacy noise statistics | columns, epsilon |
+| impact_of_data_on_AI | correlations | Categorical and numerical correlation matrices | columns |
+| impact_of_data_on_AI | feature_relevance | Feature relevance using Pearson correlation | cat_columns, num_columns, target_column |
+| fairness_and_bias | class_imbalance | Class imbalance degree and distribution | target_column |
+| fairness_and_bias | statistical_rates | Statistical rates across sensitive groups | y_true_column, sensitive_attribute_column |
+| fairness_and_bias | representation_rate | Representation rate ratios | columns |
+| data_governance | k_anonymity | k-anonymity score | quasi_identifiers |
+| data_governance | l_diversity | l-diversity score | quasi_identifiers, sensitive_column |
+| data_governance | t_closeness | t-closeness score | quasi_identifiers, sensitive_column |
+| data_governance | entropy_risk | Entropy risk score | quasi_identifiers |
+| data_governance | single_attribute_risk | Single attribute Markov-model risk | id_column, eval_columns |
+| data_governance | multiple_attribute_risk | Multiple attribute Markov-model risk | id_column, eval_columns |
 
 ### Supported File Types
 
