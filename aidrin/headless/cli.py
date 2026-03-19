@@ -144,8 +144,8 @@ def _configure_common_run_args(parser: argparse.ArgumentParser) -> None:
     parser.set_defaults(save_images=True)
     parser.add_argument("--image-dir", default=None)
     parser.add_argument("-v", "--verbose", action="store_true", help="Show progress output")
-    parser.add_argument("--no-viz", action="store_true", help="Strip visualization data from output")
-    parser.add_argument("--detail", action="store_true", help="Output full per-feature JSON instead of summary")
+    parser.add_argument("--no-viz", action="store_true", help="Strip visualization data from output", default=True)
+    parser.add_argument("--detail", action="store_true", help="Output full per-feature JSON instead of summary", default=True)
 
 
 def main() -> None:

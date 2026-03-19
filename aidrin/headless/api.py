@@ -34,7 +34,7 @@ METRIC_REGISTRY: Dict[str, Dict[str, Any]] = {
     },
     "duplicity": {
         "category": "data_quality",
-        "description": "Dataset duplicity ratio.",
+        "description": "Dataset duplicates ratio.",
         "runner": run_duplicity,
         "required_args": [],
     },
@@ -45,77 +45,71 @@ METRIC_REGISTRY: Dict[str, Dict[str, Any]] = {
         "required_args": [],
     },
     "correlations": {
-        "category": "correlation",
+        "category": "impact_of_data_on_AI",
         "description": "Categorical and numerical correlation matrices.",
         "runner": run_correlations,
         "required_args": ["columns"],
     },
     "feature_relevance": {
-        "category": "correlation",
-        "description": "Feature relevance to target using Pearson correlation.",
+        "category": "impact_of_data_on_AI",
+        "description": "Feature relevance to target.",
         "runner": run_feature_relevance,
-        "required_args": ["cat_columns", "num_columns", "target_column"],
+        "required_args": ["cat-columns", "num-columns", "target-column"],
     },
     "class_imbalance": {
-        "category": "fairness",
-        "description": "Class imbalance degree and distribution plot.",
+        "category": "fairness_and_bias",
+        "description": "Class imbalance degree.",
         "runner": run_class_imbalance,
-        "required_args": ["target_column"],
+        "required_args": ["target-column"],
     },
     "statistical_rates": {
-        "category": "fairness",
+        "category": "fairness_and_bias",
         "description": "Statistical rates across sensitive groups.",
         "runner": run_statistical_rates,
-        "required_args": ["y_true_column", "sensitive_attribute_column"],
+        "required_args": ["y-true-column", "sensitive-attribute-column"],
     },
     "representation_rate": {
-        "category": "fairness",
+        "category": "fairness_and_bias",
         "description": "Representation rate ratios for categorical values.",
         "runner": run_representation_rate,
         "required_args": ["columns"],
     },
     "k_anonymity": {
-        "category": "privacy",
-        "description": "k-anonymity score and histogram.",
+        "category": "data_governance",
+        "description": "k-anonymity score.",
         "runner": run_k_anonymity,
-        "required_args": ["quasi_identifiers"],
+        "required_args": ["quasi-identifiers"],
     },
     "l_diversity": {
-        "category": "privacy",
-        "description": "l-diversity score and histogram.",
+        "category": "data_governance",
+        "description": "l-diversity score.",
         "runner": run_l_diversity,
-        "required_args": ["quasi_identifiers", "sensitive_column"],
+        "required_args": ["quasi-identifiers", "sensitive-column"],
     },
     "t_closeness": {
-        "category": "privacy",
-        "description": "t-closeness score and histogram.",
+        "category": "data_governance",
+        "description": "t-closeness score.",
         "runner": run_t_closeness,
-        "required_args": ["quasi_identifiers", "sensitive_column"],
+        "required_args": ["quasi-identifiers", "sensitive-column"],
     },
     "entropy_risk": {
-        "category": "privacy",
-        "description": "Entropy risk score and histogram.",
+        "category": "data_governance",
+        "description": "Entropy risk score.",
         "runner": run_entropy_risk,
-        "required_args": ["quasi_identifiers"],
+        "required_args": ["quasi-identifiers"],
     },
     "single_attribute_risk": {
-        "category": "privacy",
+        "category": "data_governance",
         "description": "Single attribute Markov-model risk scores.",
         "runner": run_single_attribute_risk,
-        "required_args": ["id_column", "eval_columns"],
+        "required_args": ["id-column", "eval-columns"],
     },
     "multiple_attribute_risk": {
-        "category": "privacy",
+        "category": "data_governance",
         "description": "Multiple attribute Markov-model risk scores.",
         "runner": run_multiple_attribute_risk,
-        "required_args": ["id_column", "eval_columns"],
-    },
-    "differential_privacy": {
-        "category": "privacy",
-        "description": "Differential privacy noise injection statistics.",
-        "runner": run_differential_privacy,
-        "required_args": ["columns", "epsilon"],
-    },
+        "required_args": ["id-column", "eval-columns"],
+    }
 }
 
 
@@ -165,12 +159,19 @@ def _safe_slug(value: str) -> str:
 
 def _strip_visualizations(result: Any) -> Any:
     """Recursively strip visualization data from results."""
+    EXCLUDED_KEYS = {"visualization", "graph interpretation", "plot_data", "histogram_data", "descriptive_statistics"}
+
     if isinstance(result, dict):
         return {
             k: _strip_visualizations(v)
             for k, v in result.items()
-            if not isinstance(k, str) or "visualization" not in k.lower()
+            if not (isinstance(k, str) and any(key in k.lower() for key in EXCLUDED_KEYS))
         }
+
+    # Handle lists (e.g., if a metric returns a list of dictionaries)
+    if isinstance(result, list):
+        return [_strip_visualizations(item) for item in result]
+
     return result
 
 
