@@ -27,85 +27,85 @@ from .runners import (
 
 METRIC_REGISTRY: Dict[str, Dict[str, Any]] = {
     "completeness": {
-        "category": "data_quality",
+        "category": "data-quality",
         "description": "Column completeness scores and overall completeness.",
         "runner": run_completeness,
         "required_args": [],
     },
     "duplicity": {
-        "category": "data_quality",
+        "category": "data-quality",
         "description": "Dataset duplicates ratio.",
         "runner": run_duplicity,
         "required_args": [],
     },
     "outliers": {
-        "category": "data_quality",
+        "category": "data-quality",
         "description": "Outlier proportions for numerical columns.",
         "runner": run_outliers,
         "required_args": [],
     },
     "correlations": {
-        "category": "impact_of_data_on_AI",
+        "category": "impact-of-data-on-AI",
         "description": "Categorical and numerical correlation matrices.",
         "runner": run_correlations,
         "required_args": ["columns"],
     },
     "feature_relevance": {
-        "category": "impact_of_data_on_AI",
+        "category": "impact-of-data-on-AI",
         "description": "Feature relevance to target.",
         "runner": run_feature_relevance,
         "required_args": ["cat-columns", "num-columns", "target-column"],
     },
     "class_imbalance": {
-        "category": "fairness_and_bias",
+        "category": "fairness-and-bias",
         "description": "Class imbalance degree.",
         "runner": run_class_imbalance,
         "required_args": ["target-column"],
     },
     "statistical_rates": {
-        "category": "fairness_and_bias",
+        "category": "fairness-and-bias",
         "description": "Statistical rates across sensitive groups.",
         "runner": run_statistical_rates,
         "required_args": ["y-true-column", "sensitive-attribute-column"],
     },
     "representation_rate": {
-        "category": "fairness_and_bias",
+        "category": "fairness-and-bias",
         "description": "Representation rate ratios for categorical values.",
         "runner": run_representation_rate,
         "required_args": ["columns"],
     },
     "k_anonymity": {
-        "category": "data_governance",
+        "category": "data-governance",
         "description": "k-anonymity score.",
         "runner": run_k_anonymity,
         "required_args": ["quasi-identifiers"],
     },
     "l_diversity": {
-        "category": "data_governance",
+        "category": "data-governance",
         "description": "l-diversity score.",
         "runner": run_l_diversity,
         "required_args": ["quasi-identifiers", "sensitive-column"],
     },
     "t_closeness": {
-        "category": "data_governance",
+        "category": "data-governance",
         "description": "t-closeness score.",
         "runner": run_t_closeness,
         "required_args": ["quasi-identifiers", "sensitive-column"],
     },
     "entropy_risk": {
-        "category": "data_governance",
+        "category": "data-governance",
         "description": "Entropy risk score.",
         "runner": run_entropy_risk,
         "required_args": ["quasi-identifiers"],
     },
     "single_attribute_risk": {
-        "category": "data_governance",
+        "category": "data-governance",
         "description": "Single attribute Markov-model risk scores.",
         "runner": run_single_attribute_risk,
         "required_args": ["id-column", "eval-columns"],
     },
     "multiple_attribute_risk": {
-        "category": "data_governance",
+        "category": "data-governance",
         "description": "Multiple attribute Markov-model risk scores.",
         "runner": run_multiple_attribute_risk,
         "required_args": ["id-column", "eval-columns"],
@@ -124,18 +124,25 @@ def _normalize_list(value: Optional[Any]) -> Optional[List[str]]:
 
 
 def list_available_metrics(category: Optional[str] = None) -> List[Dict[str, Any]]:
-    results = []
+    results = {}
+
     for name, meta in METRIC_REGISTRY.items():
-        if category and meta["category"] != category:
+        metric_category = meta["category"]
+
+        # Filter by category if requested
+        if category and metric_category != category:
             continue
-        results.append(
-            {
-                "name": name,
-                "category": meta["category"],
-                "description": meta["description"],
-                "required_args": list(meta.get("required_args", [])),
-            }
-        )
+
+        # Initialize the category list if it doesn't exist
+        if metric_category not in results:
+            results[metric_category] = []
+
+        results[metric_category].append({
+            "name": name,
+            "description": meta["description"],
+            "required_args": list(meta.get("required_args", []))
+        })
+
     return results
 
 
