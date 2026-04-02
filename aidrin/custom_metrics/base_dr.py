@@ -1,5 +1,6 @@
 import abc
 from typing import Dict, Any
+import pandas as pd
 
 
 class BaseDRAgent(abc.ABC):
@@ -21,5 +22,14 @@ class BaseDRAgent(abc.ABC):
 
         Returns:
             Dict[str, Any]: A dictionary containing metric results (e.g., {"null_values": {...}}).
+        """
+        pass
+
+    @abc.abstractmethod
+    def remedy(self, **kwargs) -> pd.DataFrame:
+        """
+        Apply remediation steps to the dataset and return the modified DataFrame.
+
+        The return value must be a pandas DataFrame; it will be saved to disk by the caller.
         """
         pass

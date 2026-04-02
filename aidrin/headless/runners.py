@@ -9,7 +9,6 @@ from aidrin.file_handling.file_parser import read_file
 from aidrin.structured_data_metrics.add_noise import return_noisy_stats
 from aidrin.structured_data_metrics.class_imbalance import (
     calc_imbalance_degree,
-    class_distribution_plot,
 )
 from aidrin.structured_data_metrics.completeness import completeness
 from aidrin.structured_data_metrics.correlation_score import calc_correlations
@@ -147,15 +146,6 @@ def run_class_imbalance(
     ci_dict: Dict[str, Any] = {}
 
     try:
-        ci_dict["Class Imbalance Visualization"] = class_distribution_plot(
-            data, target_column
-        )
-        ci_dict["Description"] = (
-            "The chart displays the distribution of classes within the "
-            "specified feature, providing a visual representation of the "
-            "relative proportions of each class."
-        )
-
         imbalance_result = calc_imbalance_degree(
             data, target_column, dist_metric=distance_metric
         )
@@ -192,9 +182,9 @@ def run_statistical_rates(
     if isinstance(result, dict) and "Error" in result:
         return result
     result["Description"] = (
-        "The graph illustrates the statistical rates of various classes across different sensitive attributes. "
-        "Each group in the graph represents a specific sensitive attribute, and within each group, each bar corresponds "
-        "to a class, with the height indicating the proportion of that sensitive attribute within that particular class"
+        "The result illustrates the statistical rates of various classes across different sensitive attributes. "
+        "Each group in the result represents a specific sensitive attribute, and within each group, each key corresponds "
+        "to a class, with the value indicating the proportion of that sensitive attribute within that particular class"
     )
     return result
 

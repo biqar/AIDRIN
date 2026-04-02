@@ -176,9 +176,9 @@ def generate_single_attribute_MM_risk_scores(df, id_col, eval_cols, task=None):
         result_dict["Single attribute risk scoring Visualization"] = base64_image
         result_dict["Description"] = (
             "This metric quantifies the re-identification risk for each "
-            "quasi-identifier. Lower values are preferred, indicating "
-            "features that are less likely to uniquely identify individuals. "
-            "High-risk features may require further anonymization or removal."
+            "quasi-identifier. Scores range from 0 (best) to 1 (worst); lower values are preferred, indicating "
+            "features that are less likely to uniquely identify individuals. Values near 1 signal high re-identification risk "
+            "and may require further anonymization or removal."
         )
         result_dict["Graph interpretation"] = (
             "The box plot displays the distribution of risk scores for each feature. Features with "
@@ -407,7 +407,7 @@ def generate_multiple_attribute_MM_risk_scores(df, id_col, eval_cols, task=None)
 
         result_dict["Description"] = (
             "This metric evaluates the joint risk posed by combinations of "
-            "quasi-identifiers. Lower values are preferred, as they indicate "
+            "quasi-identifiers. Scores are normalized between 0 (best) and 1 (worst); lower values indicate "
             "that the selected set of features does not easily allow "
             "re-identification."
         )
@@ -502,7 +502,7 @@ def compute_k_anonymity(quasi_identifiers: List[str], file_info):
             "k-Anonymity Visualization": base64_image,
             "Description": (
                 "k-anonymity measures the minimum group size sharing the same quasi-identifier values. "
-                "Higher k values are preferred, as they indicate stronger anonymity."
+                "Higher k values are preferred (range: 1 to dataset size), as they indicate stronger anonymity."
             ),
             "Graph interpretation": (
                 "The histogram shows the distribution of equivalence class sizes. A shift toward larger "
@@ -608,7 +608,7 @@ def compute_l_diversity(
             "l-Diversity Visualization": base64_image,
             "Description": (
                 "l-diversity quantifies the diversity of sensitive attributes within each group. "
-                "Higher l values are preferred, indicating less risk of attribute disclosure."
+                "Higher l values are preferred (minimum 1; higher is better), indicating less risk of attribute disclosure."
             ),
             "Graph interpretation": (
                 "The histogram displays the spread of l-diversity values. A distribution concentrated at higher l values is optimal."
@@ -719,7 +719,7 @@ def compute_t_closeness(
             "t-Closeness Visualization": base64_image,
             "Description": (
                 "t-closeness measures the distance between the distribution of sensitive attributes "
-                "in a group and the overall distribution. Lower t values are preferred, indicating less information leakage."
+                "in a group and the overall distribution. Lower t values are preferred; t ranges from 0 (best) to 1 (worst)."
             ),
             "Graph interpretation": (
                 "The histogram shows the distribution of t values. Lower t values across groups indicate stronger privacy."
@@ -816,7 +816,7 @@ def compute_entropy_risk(quasi_identifiers, file_info):
             "Entropy Risk Visualization": base64_image,
             "Description": (
                 "Entropy risk quantifies the uncertainty in identifying individuals within equivalence classes. "
-                "Higher entropy values are preferred, indicating greater anonymity and lower re-identification risk."
+                "Higher entropy values are preferred; entropy is non-negative and increases with better anonymity."
             ),
             "Graph interpretation": (
                 "The bar chart visualizes the distribution of entropy values. Higher bars on the right (higher entropy) "

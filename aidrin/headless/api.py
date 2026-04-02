@@ -126,6 +126,36 @@ def _normalize_list(value: Optional[Any]) -> Optional[List[str]]:
     return [str(value).strip()]
 
 
+def list_custom_metrics(custom_dir: Optional[str] = None) -> Dict[str, List[Dict[str, Any]]]:
+    """Return metadata for custom modules, split into metrics and remedies."""
+    target_dir = custom_dir or os.path.join(os.getcwd(), "aidrin/custom_metrics")
+    if not os.path.isdir(target_dir):
+        return {"custom_metrics": [], "custom_remedies": []}
+
+    metrics: List[Dict[str, Any]] = []
+    remedies: List[Dict[str, Any]] = []
+    for filename in os.listdir(target_dir):
+        if (
+            not filename.endswith(".py")
+            or filename in {"__init__.py", "base_dr.py"}
+            or filename.startswith("_")
+        ):
+            continue
+        name = filename[:-3]
+        display_name = name.replace("_", "-")
+        metrics.append({
+            "name": display_name,
+            "description": "Custom metric defined in aidrin/custom_metrics. Run with: aidrin run custom <name> <file> metric",
+            "required_args": [],
+        })
+        remedies.append({
+            "name": display_name,
+            "description": "Custom remedy defined in aidrin/custom_metrics. Run with: aidrin run custom <name> <file> remedy",
+            "required_args": [],
+        })
+    return {"custom_metrics": metrics, "custom_remedies": remedies}
+
+
 def list_available_metrics(category: Optional[str] = None) -> List[Dict[str, Any]]:
     results = {}
 
@@ -140,11 +170,26 @@ def list_available_metrics(category: Optional[str] = None) -> List[Dict[str, Any
         if metric_category not in results:
             results[metric_category] = []
 
+        arg_map = {
+            "cat-columns": "categorical-columns",
+            "num-columns": "numerical-columns",
+            "y-true-column": "target-column",
+        }
+        raw_args = list(meta.get("required_args", []))
+        display_args = [arg_map.get(arg, arg) for arg in raw_args]
+
         results[metric_category].append({
-            "name": name,
+            "name": name.replace("_", "-"),
             "description": meta["description"],
-            "required_args": list(meta.get("required_args", []))
+            "required_args": display_args
         })
+
+    # Append custom metrics under their own category unless filtered out
+    custom = list_custom_metrics()
+    if (category is None or category == "custom_metrics") and custom["custom_metrics"]:
+        results["custom_metrics"] = custom["custom_metrics"]
+    if (category is None or category == "custom_remedies") and custom["custom_remedies"]:
+        results["custom_remedies"] = custom["custom_remedies"]
 
     return results
 
@@ -168,8 +213,15 @@ def _safe_slug(value: str) -> str:
 
 
 def _strip_visualizations(result: Any) -> Any:
-    """Recursively strip visualization data from results."""
-    EXCLUDED_KEYS = {"visualization", "graph interpretation", "plot_data", "histogram_data", "descriptive_statistics"}
+    """Recursively strip visualization (and descriptive-only) data from results."""
+    EXCLUDED_KEYS = {
+        "visualization",
+        "graph interpretation",
+        "plot_data",
+        "histogram_data",
+        "descriptive_statistics",
+        "plot",
+    }
 
     if isinstance(result, dict):
         return {
@@ -239,7 +291,19 @@ def run_metric(
     metric_key = metric_name.strip().lower()
     metric = METRIC_REGISTRY.get(metric_key)
     if not metric:
-        raise ValueError(f"Unknown metric: {metric_name}")
+        # Try resolving as a custom metric
+        try:
+            _log_progress(f"Running custom metric: {metric_key}...", verbose)
+            start_time = time.time()
+            result = run_custom_metric_logic(metric_key, file_path, **kwargs)
+            result = _maybe_save_images(metric_key, result, save_images, image_dir)
+            if strip_visualizations:
+                result = _strip_visualizations(result)
+            elapsed = time.time() - start_time
+            _log_progress(f"  {metric_key} completed in {elapsed:.2f}s", verbose)
+            return result
+        except FileNotFoundError:
+            raise ValueError(f"Unknown metric: {metric_name}") from None
 
     _log_progress(f"Running {metric_key}...", verbose)
     start_time = time.time()
@@ -500,6 +564,19 @@ class CustomDR(BaseDRAgent):
         # }
 
         return {"message": "Placeholder metric. Implement your logic here."}
+
+    def remedy(self, **kwargs) -> pd.DataFrame:
+        \"\"\"
+        Apply remediation steps to the dataset and return a pandas DataFrame.
+        \"\"\"
+
+        # df: pd.DataFrame = self.dataset.copy()
+        # TODO: implement remediation logic and return the modified DataFrame
+        # Example:
+        # df = df.fillna(0)
+        # return df
+
+        return self.dataset
     """
 
     with open(file_path, "w") as f:
@@ -538,3 +615,42 @@ def run_custom_metric_logic(metric_name: str, file_path: str, **kwargs) -> Dict[
     results = agent.metric(**kwargs)
 
     return results
+
+
+
+def run_custom_metric_remedy(metric_name: str, file_path: str, *, output_dir: Optional[str] = None, **kwargs) -> str:
+    """Execute `remedy` on a custom metric and save the returned DataFrame as CSV."""
+    custom_dir = os.path.join(os.getcwd(), "aidrin/custom_metrics")
+    clean_name = _safe_slug(metric_name)
+    script_path = os.path.join(custom_dir, f"{clean_name}.py")
+
+    if not os.path.exists(script_path):
+        raise FileNotFoundError(f"Custom metric file not found at: {script_path}")
+
+    spec = importlib.util.spec_from_file_location(clean_name, script_path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    if not hasattr(module, "CustomDR"):
+        raise AttributeError(f"Class 'CustomDR' not found in {script_path}")
+
+    _log_progress(f"Loading dataset for remedy: {file_path}", kwargs.get("verbose", False))
+    df = pd.read_csv(file_path)
+
+    agent = module.CustomDR(dataset=df, **kwargs)
+    if not hasattr(agent, "remedy"):
+        raise AttributeError("CustomDR must implement a remedy method returning a pandas DataFrame")
+
+    _log_progress(f"Executing remedy for custom metric: {metric_name}", kwargs.get("verbose", False))
+    remedied = agent.remedy(**kwargs)
+
+    if not isinstance(remedied, pd.DataFrame):
+        raise TypeError("remedy() must return a pandas DataFrame")
+
+    target_dir = output_dir or os.path.join(custom_dir, "remedy_data")
+    os.makedirs(target_dir, exist_ok=True)
+    filename = f"{clean_name}_remedy.csv"
+    output_path = os.path.join(target_dir, filename)
+    remedied.to_csv(output_path, index=False)
+
+    return output_path

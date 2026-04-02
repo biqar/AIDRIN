@@ -23,7 +23,7 @@ fi
 for config in "$SCRIPT_DIR"/0*.yaml; do
     name=$(basename "$config")
     echo "=== Running $name ==="
-    aidrin batch "$config" --no-viz -v
+    aidrin batch "$config" -v
     echo
 done
 

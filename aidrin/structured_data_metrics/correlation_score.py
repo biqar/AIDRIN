@@ -71,8 +71,6 @@ def calc_correlations(self: Task, columns: List[str], file_info):
             categorical_correlation = associations(
                 df[categorical_columns], nom_nom_assoc=NOMINAL_NOMINAL_ASSOC, plot=False
             )
-            print(categorical_correlation["corr"])
-
             # Create a subplot with 1 row and 1 column
             _, axes = plt.subplots(1, 1, figsize=(8, 8))
 

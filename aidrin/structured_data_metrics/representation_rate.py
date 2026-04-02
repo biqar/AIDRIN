@@ -20,6 +20,11 @@ def calculate_representation_rate(self: Task, columns, file_info):
             column_series = dataframe[column].dropna()
             value_counts = column_series.value_counts(normalize=True)
 
+            # Group-to-total ratios (single value prevalence within the column)
+            for attribute_value, ratio in value_counts.items():
+                key = f"Column: '{column}', Ratio of '{attribute_value}' to total"
+                representation_rate_info[key] = ratio
+
             for attribute_value1 in value_counts.index:
                 for attribute_value2 in value_counts.index:
                     if attribute_value1 != attribute_value2:

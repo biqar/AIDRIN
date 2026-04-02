@@ -265,9 +265,6 @@ def class_distribution_plot(df, column):
         if len(unique_classes) > 50:
             raise ValueError(f"Column '{column}' has too many classes ({len(unique_classes)}). Visualization works best with fewer than 50 classes.")
 
-        # Debug: Print some info about the data
-        print(f"Class distribution plot - Column: {column}, Unique values: {len(class_counts)}, Total: {class_counts.sum()}")
-
         # Convert labels to strings and handle truncation safely
         class_labels_modified = []
         for label in class_counts.index:

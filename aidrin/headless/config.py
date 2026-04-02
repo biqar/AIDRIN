@@ -37,7 +37,37 @@ class HeadlessConfig:
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "HeadlessConfig":
-        normalized = dict(data or {})
+        incoming = dict(data or {})
+
+        # Normalize keys: convert dashes to underscores and apply explicit aliases
+        key_aliases = {
+            "categorical-columns": "cat_columns",
+            "numerical-columns": "num_columns",
+            "target-column": "target_column",
+            "y-true-column": "y_true_column",
+            "quasi-identifiers": "quasi_identifiers",
+            "sensitive-column": "sensitive_column",
+            "sensitive-attribute-column": "sensitive_attribute_column",
+            "eval-columns": "eval_columns",
+            "id-column": "id_column",
+            "distance-metric": "distance_metric",
+            "file-path": "file_path",
+            "file-type": "file_type",
+            "file-name": "file_name",
+            "image-dir": "image_dir",
+            "save-images": "save_images",
+        }
+
+        normalized: Dict[str, Any] = {}
+        for raw_key, value in incoming.items():
+            key = raw_key.replace("-", "_")
+            key = key_aliases.get(raw_key, key_aliases.get(key, key))
+            normalized[key] = value
+
+        # Normalize metric names to internal keys (replace dashes with underscores)
+        if "metrics" in normalized and isinstance(normalized["metrics"], list):
+            normalized["metrics"] = [str(m).replace("-", "_") for m in normalized["metrics"]]
+
         for key in (
             "metrics",
             "columns",
@@ -52,7 +82,7 @@ class HeadlessConfig:
 
     @classmethod
     def from_json_file(cls, path: str) -> "HeadlessConfig":
-        with open(path, "r", encoding="utf-8") as handle:
+        with open(path, encoding="utf-8") as handle:
             payload = json.load(handle)
         return cls.from_dict(payload)
 
@@ -62,7 +92,7 @@ class HeadlessConfig:
         if ext in (".yaml", ".yml"):
             import yaml
 
-            with open(path, "r", encoding="utf-8") as handle:
+            with open(path, encoding="utf-8") as handle:
                 payload = yaml.safe_load(handle)
             return cls.from_dict(payload or {})
         return cls.from_json_file(path)
