@@ -2,14 +2,9 @@ import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-# Signal metrics to skip chart generation in headless mode
-os.environ.setdefault("AIDRIN_HEADLESS", "1")
-
 from aidrin.file_handling.file_parser import read_file
 from aidrin.structured_data_metrics.add_noise import return_noisy_stats
-from aidrin.structured_data_metrics.class_imbalance import (
-    calc_imbalance_degree,
-)
+from aidrin.structured_data_metrics.class_imbalance import calc_imbalance_degree
 from aidrin.structured_data_metrics.completeness import completeness
 from aidrin.structured_data_metrics.correlation_score import calc_correlations
 from aidrin.structured_data_metrics.duplicity import duplicity
@@ -32,6 +27,9 @@ from aidrin.structured_data_metrics.representation_rate import (
     create_representation_rate_vis,
 )
 from aidrin.structured_data_metrics.statistical_rate import calculate_statistical_rates
+
+# Signal metrics to skip chart generation in headless mode
+os.environ.setdefault("AIDRIN_HEADLESS", "1")
 
 _EXCEL_TYPES = {".xls", ".xlsx", ".xlsm", ".xlsb"}
 _EXCEL_KEY = ".xls, .xlsb, .xlsx, .xlsm"

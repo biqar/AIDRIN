@@ -5,7 +5,6 @@ import sys
 import time
 import importlib.util
 import pandas as pd
-from typing import Any, Dict, Optional
 from typing import Any, Dict, List, Optional
 
 from .config import HeadlessConfig
@@ -13,7 +12,6 @@ from .runners import (
     run_class_imbalance,
     run_completeness,
     run_correlations,
-    run_differential_privacy,
     run_duplicity,
     run_entropy_risk,
     run_feature_relevance,
@@ -584,6 +582,7 @@ class CustomDR(BaseDRAgent):
 
     return file_path
 
+
 def run_custom_metric_logic(metric_name: str, file_path: str, **kwargs) -> Dict[str, Any]:
     """
     Dynamically loads and executes a CustomDR class from the custom_metrics folder.
@@ -615,7 +614,6 @@ def run_custom_metric_logic(metric_name: str, file_path: str, **kwargs) -> Dict[
     results = agent.metric(**kwargs)
 
     return results
-
 
 
 def run_custom_metric_remedy(metric_name: str, file_path: str, *, output_dir: Optional[str] = None, **kwargs) -> str:

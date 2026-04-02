@@ -153,10 +153,8 @@ def data_cleaning(self: Task, cat_cols, num_cols, target_col, file_info):
     try:
         try:
             df = read_file(file_info)
-        except Exception as e:
-            return {
-                "Error": "Failed to read the file. Please check the file path and type."
-            }
+        except Exception:
+            return {"Error": "Failed to read the file. Please check the file path and type."}
 
         # Filter DataFrame to include only the specified columns
         selected_columns = [target_col] + cat_cols + num_cols
@@ -178,48 +176,45 @@ def data_cleaning(self: Task, cat_cols, num_cols, target_col, file_info):
             for col in cat_cols:
                 try:
                     df_filtered[col] = df_filtered[col].fillna("Missing")
-                except Exception as e:
-                    # Fallback: replace NaN with a default value
+                except Exception:
                     df_filtered[col] = df_filtered[col].astype(str).replace('nan', 'Missing')
 
         if num_cols:  # Only process if there are numerical columns
             for col in num_cols:
                 try:
-                    # Calculate mean safely
                     col_mean = df_filtered[col].mean()
                     if pd.isna(col_mean):
                         col_mean = 0.0
                     df_filtered[col] = df_filtered[col].fillna(col_mean)
-                except Exception as e:
-                    # Fallback: replace NaN with 0
+                except Exception:
                     df_filtered[col] = df_filtered[col].fillna(0.0)
 
         # One-hot encode categorical columns only if they exist
         if cat_cols:
             try:
                 df_filtered = pd.get_dummies(df_filtered, columns=cat_cols)
-            except Exception as e:
-                return {"Error": f"One-hot encoding failed: {str(e)}"}
+            except Exception as exc:
+                return {"Error": f"One-hot encoding failed: {str(exc)}"}
 
         # Encode target variable if categorical
         if pd.api.types.is_object_dtype(df_filtered[target_col]) or isinstance(df_filtered[target_col].dtype, pd.StringDtype):
             try:
                 le_target = LabelEncoder()
                 df_filtered[target_col] = le_target.fit_transform(df_filtered[target_col])
-            except Exception as e:
-                return {"Error": f"Target column encoding failed: {str(e)}"}
+            except Exception as exc:
+                return {"Error": f"Target column encoding failed: {str(exc)}"}
 
         # Convert to JSON more safely
         try:
             result = df_filtered.to_dict(orient="list")
             return result
-        except Exception as e:
-            return {"Error": f"JSON conversion failed: {str(e)}"}
+        except Exception as exc:
+            return {"Error": f"JSON conversion failed: {str(exc)}"}
 
     except SoftTimeLimitExceeded:
         raise Exception("Data Cleaning task timed out.")
-    except Exception as e:
-        return {"Error": f"Data cleaning failed: {str(e)}"}
+    except Exception as exc:
+        return {"Error": f"Data cleaning failed: {str(exc)}"}
 
 
 @shared_task(bind=True, ignore_result=False)
@@ -228,8 +223,8 @@ def pearson_correlation(self: Task, df_json, target_col) -> dict:
         # Convert JSON back to DataFrame with proper error handling
         try:
             df = pd.DataFrame.from_dict(df_json)
-        except Exception as e:
-            return {"Error": f"Failed to convert data: {str(e)}"}
+        except Exception as exc:
+            return {"Error": f"Failed to convert data: {str(exc)}"}
 
         # Ensure target column exists
         if target_col not in df.columns:
@@ -270,7 +265,7 @@ def pearson_correlation(self: Task, df_json, target_col) -> dict:
                     if np.isfinite(corr):
                         correlations[col] = float(corr)  # Convert to Python float for JSON serialization
 
-                except Exception as e:
+                except Exception:
                     continue
 
         if not correlations:
@@ -280,8 +275,8 @@ def pearson_correlation(self: Task, df_json, target_col) -> dict:
 
     except SoftTimeLimitExceeded:
         raise Exception("Pearson Correlation task timed out.")
-    except Exception as e:
-        return {"Error": f"Correlation calculation failed: {str(e)}"}
+    except Exception as exc:
+        return {"Error": f"Correlation calculation failed: {str(exc)}"}
 
 
 @shared_task(bind=True, ignore_result=False)
@@ -364,7 +359,7 @@ def plot_features(self: Task, correlations, target_col):
 
     except SoftTimeLimitExceeded:
         raise Exception("Plot Features task timed out.")
-    except Exception as e:
+    except Exception:
         return None
 
 

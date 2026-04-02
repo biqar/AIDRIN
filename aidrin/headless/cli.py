@@ -213,8 +213,17 @@ def main() -> None:
     parser = argparse.ArgumentParser(prog="aidrin")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    create_parser = subparsers.add_parser("add-custom-module", help="Create a new custom module template (metric + remedy) in the 'aidrin/custom_metrics' directory")
-    create_parser.add_argument("name", help="Name of the custom module (e.g. 'my_audit'). This will create 'my_audit.py' in the 'aidrin/custom_metrics' directory. Make sure the name does not contain spaces or special characters.")
+    create_parser = subparsers.add_parser(
+        "add-custom-module",
+        help="Create a new custom module template (metric + remedy) in the 'aidrin/custom_metrics' directory",
+    )
+    create_parser.add_argument(
+        "name",
+        help=(
+            "Name of the custom module (e.g. 'my_audit'). This will create 'my_audit.py' in the "
+            "'aidrin/custom_metrics' directory. Make sure the name does not contain spaces or special characters."
+        ),
+    )
 
     list_parser = subparsers.add_parser("list", help="List available metrics")
     list_parser.add_argument("--category", default=None)
@@ -226,7 +235,10 @@ def main() -> None:
     for metric_name, meta in METRIC_REGISTRY.items():
         extra_help = ""
         if metric_name == "feature_relevance":
-            extra_help = " (provide categorical-columns or numerical-columns; example: aidrin feature-relevance data.csv \"gender\" \"age,income\" target)"
+            extra_help = (
+                " (provide categorical-columns or numerical-columns; example: "
+                "aidrin feature-relevance data.csv \"gender\" \"age,income\" target)"
+            )
         metric_cli = metric_name.replace("_", "-")
         mparser = run_subparsers.add_parser(metric_cli, help=meta["description"] + extra_help)
         mparser.add_argument("file_path", help="Path to the dataset CSV")
@@ -235,7 +247,10 @@ def main() -> None:
         mparser.set_defaults(_metric_key=metric_name, _action="metric")
 
     # Custom metric / remedy runner
-    custom_parser = run_subparsers.add_parser("custom", help="Run a custom metric or remedy (aidrin/custom_metrics)")
+    custom_parser = run_subparsers.add_parser(
+        "custom",
+        help="Run a custom metric or remedy (aidrin/custom_metrics)",
+    )
     custom_parser.add_argument("name", help="Custom metric module name (filename without .py)")
     custom_parser.add_argument("file_path", help="Path to the dataset CSV")
     custom_parser.add_argument("action", nargs="?", choices=["metric", "remedy"], default="metric", help="Run metric (default) or remedy")
@@ -289,7 +304,9 @@ def main() -> None:
             metric_key = getattr(args, "_metric_key", None)
             if metric_key:
                 if metric_key == "feature_relevance" and not (args.cat_columns or args.num_columns):
-                    sys.stderr.write("Error: provide at least one of categorical-columns or numerical-columns\n")
+                    sys.stderr.write(
+                        "Error: provide at least one of categorical-columns or numerical-columns\n"
+                    )
                     sys.exit(2)
                 result = run_metric(
                     metric_key,
@@ -330,7 +347,9 @@ def main() -> None:
         # Top-level metric shortcut (e.g., `aidrin completeness ...`)
         if args.command in METRIC_REGISTRY:
             if args.command == "feature_relevance" and not (args.cat_columns or args.num_columns):
-                sys.stderr.write("Error: provide at least one of categorical-columns or numerical-columns\n")
+                sys.stderr.write(
+                    "Error: provide at least one of categorical-columns or numerical-columns\n"
+                )
                 sys.exit(2)
             result = run_metric(
                 args.command,
