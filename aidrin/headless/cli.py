@@ -2,8 +2,9 @@ import argparse
 import json
 import sys
 from typing import List, Optional
+import os
 
-from .api import list_available_metrics, run_batch_metrics, run_data_quality, run_metric
+from .api import list_available_metrics, run_batch_metrics, run_data_quality, run_metric, generate_metric_template, run_custom_metric_logic
 from .config import HeadlessConfig
 
 
@@ -152,6 +153,17 @@ def main() -> None:
     parser = argparse.ArgumentParser(prog="aidrin")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
+    create_parser = subparsers.add_parser("add-custom-metric", help="Create a new custom metric template in the 'aidrin/custom_metrics' directory")
+    create_parser.add_argument("name", help="Name of the custom metric (e.g. 'my_audit'). This will create 'my_audit.py' in the 'aidrin/custom_metrics' directory. Make sure the name does not contain spaces or special characters.")
+
+    custom_run_parser = subparsers.add_parser(
+        "run-custom-metric",
+        help="Execute a locally defined custom metric"
+    )
+    custom_run_parser.add_argument("metric", help="Name of the custom metric file (without .py)")
+    custom_run_parser.add_argument("file_path", help="Path to the dataset CSV")
+    custom_run_parser.add_argument("-v", "--verbose", action="store_true")
+
     list_parser = subparsers.add_parser("list", help="List available metrics")
     list_parser.add_argument("--category", default=None)
 
@@ -175,6 +187,23 @@ def main() -> None:
     args = parser.parse_args()
 
     try:
+        if args.command == "add-custom-metric":
+            DEFAULT_CUSTOM_DIR = os.path.join(os.getcwd(), "aidrin/custom_metrics")
+            try:
+                path = generate_metric_template(args.name, DEFAULT_CUSTOM_DIR)
+                print(f"Template successfully created at: {path}")
+                print(f"Edit the 'metric' method to add your logic. Make sure to follow the instructions in the comments and return a dictionary with your metric results.")
+            except FileExistsError as e:
+                print(f"{e}")
+            return
+        if args.command == "run-custom-metric":
+            result = run_custom_metric_logic(
+                args.metric,
+                args.file_path,
+                verbose=args.verbose
+            )
+            _dump_result(result)
+            return
         if args.command == "list":
             _dump_result(list_available_metrics(category=args.category))
             return

@@ -3,6 +3,9 @@ import os
 import re
 import sys
 import time
+import importlib.util
+import pandas as pd
+from typing import Any, Dict, Optional
 from typing import Any, Dict, List, Optional
 
 from .config import HeadlessConfig
@@ -454,3 +457,84 @@ def run_privacy_assessment(
         if hasattr(config, key):
             setattr(config, key, value)
     return run_batch_metrics(config)
+
+
+def generate_metric_template(metric_name: str, target_dir: str) -> str:
+    """Creates the directory and the .py file with the CustomDR template."""
+    # 1. Prepare directory
+    if not os.path.exists(target_dir):
+        os.makedirs(target_dir)
+        # Create __init__.py so the folder is a searchable python package
+        with open(os.path.join(target_dir, "__init__.py"), "w") as f:
+            f.write("# Aidrin Custom Metrics Package\n")
+
+    # 2. Sanitize filename (e.g., "My Metric!!" -> "my_metric.py")
+    clean_name = metric_name.strip().lower().replace(" ", "_")
+    clean_name = re.sub(r"[^a-z0-9_]+", "", clean_name)
+    file_path = os.path.join(target_dir, f"{clean_name}.py")
+
+    if os.path.exists(file_path):
+        raise FileExistsError(f"A metric file named '{clean_name}.py' already exists in {target_dir}. Edit that file or choose a different name.")
+
+    # 3. The Class Template
+    content = """from aidrin.custom_metrics.base_dr import BaseDRAgent
+from typing import Any
+from typing import Dict, Union, Any
+import pandas as pd
+
+class CustomDR(BaseDRAgent):
+    def __init__(self, dataset: Any, **kwargs):
+        super().__init__(dataset, **kwargs)
+
+    def metric(self, **kwargs):
+        \"\"\"
+        Implement your custom metric logic here.
+        \"\"\"
+
+        # IMPLEMENT YOUR METRIC LOGIC BELOW
+        # Example: Calculating the total number of missing cells in the entire DataFrame
+
+        # df: pd.DataFrame = self.dataset
+        # return {
+        #     "total_missing_cells": df.isna().sum().to_dict()
+        # }
+
+        return {"message": "Placeholder metric. Implement your logic here."}
+    """
+
+    with open(file_path, "w") as f:
+        f.write(content)
+
+    return file_path
+
+def run_custom_metric_logic(metric_name: str, file_path: str, **kwargs) -> Dict[str, Any]:
+    """
+    Dynamically loads and executes a CustomDR class from the custom_metrics folder.
+    """
+    custom_dir = os.path.join(os.getcwd(), "aidrin/custom_metrics")
+    clean_name = _safe_slug(metric_name)
+    script_path = os.path.join(custom_dir, f"{clean_name}.py")
+
+    if not os.path.exists(script_path):
+        raise FileNotFoundError(f"Custom metric file not found at: {script_path}")
+
+    # 1. Dynamic Import
+    spec = importlib.util.spec_from_file_location(clean_name, script_path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    if not hasattr(module, "CustomDR"):
+        raise AttributeError(f"Class 'CustomDR' not found in {script_path}")
+
+    # 2. Load Dataset
+    # You can expand this to support parquet/json as needed
+    _log_progress(f"Loading dataset: {file_path}", kwargs.get("verbose", False))
+    df = pd.read_csv(file_path)
+
+    # 3. Instantiate and Run
+    agent = module.CustomDR(dataset=df, **kwargs)
+
+    _log_progress(f"Executing custom metric: {metric_name}", kwargs.get("verbose", False))
+    results = agent.metric(**kwargs)
+
+    return results
