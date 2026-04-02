@@ -13,7 +13,7 @@ python -m pip install -e .
 Optional: run a quick smoke test
 ```bash
 aidrin list
-aidrin data-quality headless_demos/loan_applications.csv -v
+aidrin data-quality headless_demos/loan_applications.csv
 ```
 
 ### CLI Usage
@@ -21,7 +21,6 @@ aidrin data-quality headless_demos/loan_applications.csv -v
 ```bash
 # Quick data quality assessment (recommended)
 aidrin data-quality /path/to/data.csv
-aidrin data-quality /path/to/data.csv -v  # verbose output with timing
 
 # List available metrics
 aidrin list
@@ -31,7 +30,7 @@ aidrin run <metric_name> -h # provides the required arguments to run the metric
 
 # Examples
 aidrin run completeness /path/to/data.csv
-aidrin run duplicity /path/to/data.csv -v
+aidrin run duplicity /path/to/data.csv
 aidrin run outliers /path/to/data.csv
 
 # Run with metric-specific options
