@@ -5488,7 +5488,7 @@ const _READINESS_METRIC_INFO = {
   pct_dominant:
     "Share of rows taken by the most frequent value (the mode). Values near 100% mean the column is almost constant and usually carries little signal.",
   profile_status:
-    "Readiness verdict for this feature. Poor: high missingness, constant, or ID-like. Warning: moderate issues. Good: no major issues detected.",
+    "Readiness verdict for this feature. Poor: high missingness, constant, or high-confidence ID-like. Warning: moderate issues or possible ID. Good: no major issues detected.",
   overall_dq_grade:
     "Average of the data-quality KPIs (completeness, uniqueness, outlier-cleanliness). Higher is better — indicates how clean the dataset is overall.",
   analysis_scope:

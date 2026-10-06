@@ -26,6 +26,12 @@ from aidrin.file_handling.file_reference_policy import (
     resolve_base_dir,
     scan_limit,
 )
+from web.readiness.id_like import (
+    ID_LIKE_THRESHOLD,
+    ID_POSSIBLE_THRESHOLD,
+    ID_UNIQUE_RATIO_FLOOR,
+    assess_id_likeness,
+)
 from aidrin.file_handling.value_iterators import iter_targets
 from aidrin.structured_data_metrics.add_noise import return_noisy_stats
 from aidrin.structured_data_metrics.class_imbalance import (
@@ -394,7 +400,6 @@ _OVERVIEW_MISSING_WARNING = 0.05
 _OVERVIEW_MISSING_POOR = 0.20
 _OVERVIEW_DOMINANT_WARNING = 0.95
 _OVERVIEW_HIGH_CARDINALITY = 50
-_OVERVIEW_ID_UNIQUE_RATIO = 0.9
 _OVERVIEW_CAT_TOP_N = 5
 _OVERVIEW_MAX_FEATURE_PROFILES = 500
 _OVERVIEW_MAX_NUMERICAL_SUMMARY_COLS = 500
@@ -454,19 +459,30 @@ def _classify_feature_type(series):
     return "categorical"
 
 
-def _feature_readiness_status(pct_missing, n_unique, n_rows, feat_type, pct_dominant):
+def _feature_readiness_status(
+    pct_missing, n_unique, n_rows, feat_type, pct_dominant, series=None, col_name=""
+):
     """Derive a per-feature readiness status from profile statistics."""
     if n_unique <= 1:
         return "poor"
     if pct_missing is not None and pct_missing > _OVERVIEW_MISSING_POOR:
         return "poor"
-    if n_rows > 0 and n_unique / n_rows >= _OVERVIEW_ID_UNIQUE_RATIO:
-        return "poor"
+
+    id_assessment = None
+    if series is not None:
+        id_assessment = assess_id_likeness(
+            series, col_name=col_name, n_rows=n_rows, n_unique=n_unique
+        )
+        if id_assessment.is_id_like:
+            return "poor"
+
     if pct_missing is not None and pct_missing > _OVERVIEW_MISSING_WARNING:
         return "warning"
     if feat_type == "categorical" and n_unique > _OVERVIEW_HIGH_CARDINALITY:
         return "warning"
     if pct_dominant is not None and pct_dominant > _OVERVIEW_DOMINANT_WARNING:
+        return "warning"
+    if id_assessment is not None and id_assessment.is_possible_id:
         return "warning"
     return "good"
 
@@ -530,7 +546,13 @@ def _build_feature_profiles(df):
             "n_unique": n_unique,
             "pct_dominant": pct_dominant,
             "status": _feature_readiness_status(
-                pct_missing, n_unique, n_rows, feat_type, pct_dominant
+                pct_missing,
+                n_unique,
+                n_rows,
+                feat_type,
+                pct_dominant,
+                series=series,
+                col_name=str(col),
             ),
             "summary": _feature_summary(series, feat_type, n_unique),
         })
@@ -669,7 +691,9 @@ def _build_dataset_overview_section(file_info, include_visualizations=False):
             "missing_poor": _OVERVIEW_MISSING_POOR,
             "dominant_warning": _OVERVIEW_DOMINANT_WARNING,
             "high_cardinality": _OVERVIEW_HIGH_CARDINALITY,
-            "id_unique_ratio": _OVERVIEW_ID_UNIQUE_RATIO,
+            "id_unique_ratio": ID_UNIQUE_RATIO_FLOOR,
+            "id_like_threshold": ID_LIKE_THRESHOLD,
+            "id_possible_threshold": ID_POSSIBLE_THRESHOLD,
         },
         "visualizations_deferred": not include_visualizations,
     }
@@ -813,30 +837,17 @@ def _build_data_quality_section(file_info, include_visualizations=False):
 # Impact-on-AI tuning constants
 _CORR_MAX_COLUMNS = 25          # cap analysed columns to keep heatmaps readable
 _CORR_HIGH_CARD_MAX = 50        # drop categorical columns with more unique values
-_CORR_ID_UNIQUE_RATIO = 0.9     # drop categorical columns that look like IDs
 _CORR_REDUNDANT_THRESHOLD = 0.8  # |score| at/above which a pair is "redundant"
 _CORR_LEAKAGE_THRESHOLD = 0.95  # |score| at/above which a pair is "leakage risk"
 _CORR_ISOLATED_THRESHOLD = 0.1  # max |score| below which a feature is "isolated"
-
-
-def _is_integer_like_numeric(series):
-    """True for integer dtypes or float columns whose non-null values are whole numbers."""
-    if pd.api.types.is_integer_dtype(series):
-        return True
-    if not pd.api.types.is_float_dtype(series):
-        return False
-    non_null = series.dropna()
-    if len(non_null) == 0:
-        return False
-    return bool((non_null % 1 == 0).all())
 
 
 def _prune_columns_for_corr(df):
     """Select columns worth feeding into the all-pairs correlation analysis.
 
     Drops columns that are useless or pathological for correlation: constants,
-    datetimes, ID-like columns (near-unique integer numerics or categoricals),
-    and high-cardinality categoricals. Continuous floats stay even when nearly
+    datetimes, ID-like columns (via :func:`assess_id_likeness`), and
+    high-cardinality categoricals. Continuous floats stay even when nearly
     unique. Aligns datetime / ID exclusions with
     ``_auto_select_governance_columns``. The result is capped at
     ``_CORR_MAX_COLUMNS`` (numerical prioritized) to keep the computation and
@@ -861,19 +872,21 @@ def _prune_columns_for_corr(df):
         nunique = series.nunique(dropna=True)
         if nunique <= 1:
             dropped.append({"feature": col, "reason": "constant column"})
-        elif (
-            nunique / n_rows >= _CORR_ID_UNIQUE_RATIO
-            and _is_integer_like_numeric(series)
-        ):
+        elif assess_id_likeness(
+            series, col_name=str(col), n_rows=n_rows, n_unique=nunique
+        ).is_id_like:
             dropped.append({"feature": col, "reason": "ID-like (near-unique values)"})
         else:
             kept_numeric.append(col)
 
     for col in categorical_cols:
-        nunique = df[col].nunique(dropna=True)
+        series = df[col]
+        nunique = series.nunique(dropna=True)
         if nunique <= 1:
             dropped.append({"feature": col, "reason": "constant column"})
-        elif nunique / n_rows >= _CORR_ID_UNIQUE_RATIO:
+        elif assess_id_likeness(
+            series, col_name=str(col), n_rows=n_rows, n_unique=nunique
+        ).is_id_like:
             dropped.append({"feature": col, "reason": "ID-like (near-unique values)"})
         elif nunique > _CORR_HIGH_CARD_MAX:
             dropped.append({"feature": col, "reason": f"high cardinality ({nunique} categories)"})
@@ -1046,10 +1059,11 @@ def _build_impact_on_ai_section(file_info, include_visualizations=False):
             "selection_criteria": {
                 "columns_analyzed": {
                     "rule": (
-                        f"Prune constants, datetime columns, ID-like integer "
-                        f"numerics and categoricals (unique ratio ≥ "
-                        f"{_CORR_ID_UNIQUE_RATIO}), and high-cardinality "
-                        f"categoricals (>{_CORR_HIGH_CARD_MAX} categories); "
+                        f"Prune constants, datetime columns, high-confidence "
+                        f"ID-like columns (unique ratio ≥ {ID_UNIQUE_RATIO_FLOOR} "
+                        f"with ID-likeness score ≥ {ID_LIKE_THRESHOLD}), and "
+                        f"high-cardinality categoricals "
+                        f"(>{_CORR_HIGH_CARD_MAX} categories); "
                         f"cap at {_CORR_MAX_COLUMNS} columns "
                         "(numerical prioritized)."
                     ),
@@ -1093,7 +1107,6 @@ def _build_impact_on_ai_section(file_info, include_visualizations=False):
 _FAIRNESS_SENSITIVE_MIN_UNIQUE = 2
 _FAIRNESS_SENSITIVE_MAX_UNIQUE = 30
 _FAIRNESS_MAX_SENSITIVE_COLS = 5
-_FAIRNESS_ID_UNIQUE_RATIO = 0.9
 _FAIRNESS_TARGET_MAX_UNIQUE = 30
 _FAIRNESS_REP_RATIO_FLAG = 3.0       # probability ratio at/above which representation is flagged
 _FAIRNESS_MINORITY_SHARE = 0.05      # class share below which a label is "minority"
@@ -1140,7 +1153,9 @@ def _auto_select_fairness_columns(df):
                 "feature": col,
                 "reason": f"high cardinality ({nunique} categories, max {_FAIRNESS_SENSITIVE_MAX_UNIQUE})",
             })
-        elif nunique / n_rows >= _FAIRNESS_ID_UNIQUE_RATIO:
+        elif assess_id_likeness(
+            df[col], col_name=str(col), n_rows=n_rows, n_unique=nunique
+        ).is_id_like:
             excluded_sensitive.append({"feature": col, "reason": "ID-like (near-unique values)"})
         else:
             sensitive_candidates.append({
@@ -1208,7 +1223,7 @@ def _auto_select_fairness_columns(df):
                 "rule": (
                     f"Categorical columns with {_FAIRNESS_SENSITIVE_MIN_UNIQUE}–"
                     f"{_FAIRNESS_SENSITIVE_MAX_UNIQUE} unique values, excluding "
-                    "ID-like columns; prefer name hints "
+                    "high-confidence ID-like columns; prefer name hints "
                     f"{list(_FAIRNESS_SENSITIVE_NAME_HINTS)}; "
                     f"capped at {_FAIRNESS_MAX_SENSITIVE_COLS}."
                 ),
@@ -1501,7 +1516,6 @@ def _build_fairness_bias_section(file_info, include_visualizations=False):
 _GOV_QI_MIN_UNIQUE = 2
 _GOV_QI_MAX_UNIQUE = 50
 _GOV_QI_MAX_COUNT = 4
-_GOV_ID_UNIQUE_RATIO = 0.9
 _GOV_NUMERIC_QI_MAX_UNIQUE = 20
 _GOV_MM_QI_MAX_UNIQUE = 100
 _GOV_MISSING_MAX = 0.20
@@ -1731,7 +1745,9 @@ def _auto_select_governance_columns(df, fairness_target=None):
                 "reason": f"high missingness ({pct_miss:.0%})",
             })
             continue
-        if nunique / n_rows >= _GOV_ID_UNIQUE_RATIO:
+        if assess_id_likeness(
+            df[col], col_name=str(col), n_rows=n_rows, n_unique=nunique
+        ).is_id_like:
             excluded.append({"feature": col, "role": "quasi-identifier", "reason": "ID-like (near-unique values)"})
             continue
         if feat_type in ("categorical", "boolean"):
@@ -1806,7 +1822,9 @@ def _auto_select_governance_columns(df, fairness_target=None):
         nunique = df[col].nunique(dropna=True)
         if nunique <= 1:
             continue
-        if nunique / n_rows >= _GOV_ID_UNIQUE_RATIO:
+        if assess_id_likeness(
+            df[col], col_name=str(col), n_rows=n_rows, n_unique=nunique
+        ).is_id_like:
             continue
         if _column_pct_missing(df[col], n_rows) > _GOV_MISSING_MAX:
             continue
@@ -1844,9 +1862,9 @@ def _auto_select_governance_columns(df, fairness_target=None):
                 "rule": (
                     f"Categorical/boolean with {_GOV_QI_MIN_UNIQUE}–{_GOV_QI_MAX_UNIQUE} "
                     f"unique values; discrete numeric with {_GOV_QI_MIN_UNIQUE}–"
-                    f"{_GOV_NUMERIC_QI_MAX_UNIQUE}; exclude ID-like, datetime, "
-                    f"and >{_GOV_MISSING_MAX:.0%} missing; prefer name hints; "
-                    f"capped at {_GOV_QI_MAX_COUNT}."
+                    f"{_GOV_NUMERIC_QI_MAX_UNIQUE}; exclude high-confidence "
+                    f"ID-like, datetime, and >{_GOV_MISSING_MAX:.0%} missing; "
+                    f"prefer name hints; capped at {_GOV_QI_MAX_COUNT}."
                 ),
                 "name_hints": list(_GOV_QI_NAME_HINTS),
                 "selected": quasi_identifiers,
@@ -1883,7 +1901,8 @@ def _auto_select_governance_columns(df, fairness_target=None):
             "dp_features": {
                 "rule": (
                     f"Up to {_GOV_DP_MAX_FEATURES} numerical, non-ID-like columns "
-                    f"(illustrative only, ε={_GOV_DP_EPSILON})."
+                    f"(high-confidence ID-like excluded; illustrative only, "
+                    f"ε={_GOV_DP_EPSILON})."
                 ),
                 "selected": dp_features,
                 "epsilon": _GOV_DP_EPSILON,

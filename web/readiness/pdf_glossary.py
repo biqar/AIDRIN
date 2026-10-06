@@ -22,8 +22,9 @@ READINESS_METRIC_GLOSSARY = {
         "Values near 100% mean the column is almost constant."
     ),
     "profile_status": (
-        "Readiness verdict for this feature. Poor: high missingness, constant, or ID-like. "
-        "Warning: moderate issues. Good: no major issues detected."
+        "Readiness verdict for this feature. Poor: high missingness, constant, or "
+        "high-confidence ID-like. Warning: moderate issues or possible ID. "
+        "Good: no major issues detected."
     ),
     "overall_dq_grade": (
         "Average of the data-quality KPIs (completeness, uniqueness, outlier-cleanliness). "
