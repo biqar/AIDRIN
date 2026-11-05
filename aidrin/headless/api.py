@@ -19,6 +19,7 @@ from aidrin.telemetry import mlflow_sink
 from .config import HeadlessConfig
 from .runners import (
     _build_file_info,
+    _normalize_file_type,
     run_class_imbalance,
     run_completeness,
     run_constant_feature_count,
@@ -47,6 +48,7 @@ from .runners import (
     run_statistical_rates,
     run_t_closeness,
     run_temporal_completeness,
+    run_variable_unit_validation,
 )
 
 
@@ -91,6 +93,12 @@ METRIC_REGISTRY: Dict[str, Dict[str, Any]] = {
         "category": "data-structure",
         "description": "Per-feature excess kurtosis (tail heaviness).",
         "runner": run_kurtosis,
+        "required_args": [],
+    },
+    "variable_unit_validation": {
+        "category": "data-structure",
+        "description": "Audit unit metadata for every logical variable and apply an optional canonical sidecar.",
+        "runner": run_variable_unit_validation,
         "required_args": [],
     },
     "row_level_completeness": {
@@ -258,6 +266,44 @@ def _resolve_custom_outlier_rules(kwargs: Dict[str, Any]) -> Any:
     return source_value
 
 
+def _resolve_unit_metadata(kwargs: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Resolve at most one inline, JSON-string, or host-local sidecar source."""
+    sources = {
+        "unit_metadata": kwargs.get("unit_metadata"),
+        "unit_metadata_json": kwargs.get("unit_metadata_json"),
+        "unit_metadata_file": kwargs.get("unit_metadata_file"),
+    }
+    supplied = [(name, value) for name, value in sources.items() if value is not None and value != ""]
+    if len(supplied) > 1:
+        raise ValueError(
+            "Provide at most one variable-unit metadata source: unit_metadata, "
+            "unit_metadata_json, or unit_metadata_file"
+        )
+    if not supplied:
+        return None
+
+    source_name, source_value = supplied[0]
+    if source_name == "unit_metadata":
+        return source_value
+    if source_name == "unit_metadata_file":
+        path = Path(source_value).expanduser()
+        try:
+            raw_sidecar = path.read_text(encoding="utf-8")
+        except OSError as exc:
+            raise ValueError(f"Unable to read variable-unit metadata file: {path}") from exc
+    else:
+        raw_sidecar = source_value
+
+    try:
+        sidecar = json.loads(raw_sidecar)
+    except (TypeError, json.JSONDecodeError) as exc:
+        label = "metadata file" if source_name == "unit_metadata_file" else "unit_metadata_json"
+        raise ValueError(f"Invalid JSON in variable-unit {label}") from exc
+    if not isinstance(sidecar, dict):
+        raise ValueError("Variable-unit metadata JSON must contain an object")
+    return sidecar
+
+
 def _sanitize(obj: Any) -> Any:
     """Recursively convert numpy scalars/arrays to native Python types."""
     if isinstance(obj, dict):
@@ -364,13 +410,68 @@ def get_metric_info(name: str) -> Dict[str, Any]:
     }
 
 
+def inventory(file_path: str, file_type: Optional[str] = None) -> Dict[str, Any]:
+    """Classify an HDF5/Zarr file's on-disk layout without reading it as a table.
+
+    Returns the reader's ``inventory()`` dict: ``{"type", "datasets", "groups"}``.
+    ``type`` is one of ``empty``, ``single_dataset``, ``multi_dataset``, or
+    ``legacy`` (see ``aidrin.file_handling.readers.structured`` for what each
+    means) -- ``multi_dataset`` is the layout that ``run``/``data-quality``/
+    ``summarize`` refuse to auto-flatten, and needs an explicit
+    ``selected_keys`` choice.
+
+    Every other supported format (CSV, Parquet, Excel, JSON, NumPy) is always
+    read as a single table and has no ambiguous layout to vet, so this raises
+    ``ValueError`` for them.
+    """
+    from aidrin.file_handling.file_parser import (
+        READER_MAP,
+        _SELECTION_FILE_TYPES,
+        file_upload_time_log,
+    )
+
+    normalized = _normalize_file_type(file_type, file_path)
+    if normalized not in _SELECTION_FILE_TYPES:
+        raise ValueError(
+            "'aidrin inventory' only applies to HDF5 (.h5) and Zarr (.zarr) "
+            f"files; got {normalized or '(unrecognized)'}. Every other "
+            "supported format is always read as a single table."
+        )
+    if not os.path.exists(file_path):
+        raise ValueError(f"File not found: {file_path}")
+    reader_cls = READER_MAP[normalized]
+    return reader_cls(file_path, file_upload_time_log).inventory()
+
+
+def calculate_fair_compliance(
+    metadata_path: str, standard: str = "auto", strip_visualizations: bool = True
+) -> Dict[str, Any]:
+    """Score a JSON metadata file against the FAIR principles.
+
+    ``standard`` is ``"auto"`` (detect it), ``"croissant"``, ``"rocrate"``,
+    ``"dcat-us-3.0"``, ``"dcat-us-1.1"`` or ``"datacite"``. Reads only the
+    metadata file, so it runs locally and needs no dataset. With
+    ``strip_visualizations`` the base64 ``"Pie chart"`` is left out.
+    """
+    import aidrin
+
+    if not os.path.exists(metadata_path):
+        raise ValueError(f"File not found: {metadata_path}")
+    result = aidrin.calculate_fair_compliance(metadata_path, standard)
+    if strip_visualizations:
+        result.pop("Pie chart", None)
+    return _sanitize(result)
+
+
 def summarize_dataset(
     file_path: str,
     file_type: Optional[str] = None,
     max_features: Optional[int] = None,
+    loader: Optional[str] = None,
     selected_keys: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     """Return shape, per-column descriptive stats, and missing counts for a dataset."""
+    from aidrin.file_handling.custom_loader import using_custom_loader
     from aidrin.file_handling.file_parser import read_file
     from .runners import _build_file_info
 
@@ -380,12 +481,13 @@ def summarize_dataset(
         None,
         selected_keys=_normalize_list(selected_keys),
     )
-    df = read_file(file_info)
+    with using_custom_loader(loader):
+        df = read_file(file_info, loader=loader)
 
     if df is None or isinstance(df, str):
         detail = df if isinstance(df, str) else (
-            "Unable to build a table from this file. For multi-array Zarr/HDF5 stores, "
-            "pass selected_keys with compatible 1D paths."
+            "Unable to build a table from this file. For unsupported formats or "
+            "multi-array Zarr/HDF5 stores, pass a loader or selected_keys."
         )
         raise ValueError(detail)
 
@@ -521,7 +623,8 @@ def _maybe_save_images(
 # params buries the ones that matter.
 _RESULT_AFFECTING_ARGS = frozenset({
     "epsilon", "threshold", "frequency", "distance_metric", "scan_limit",
-    "rules_file", "rules_json",
+    "rules_file", "rules_json", "unit_metadata_file", "unit_metadata_json",
+    "unit_metadata",
 })
 
 
@@ -554,19 +657,22 @@ def run_metric(
     session_id: Optional[str] = None,
     **kwargs: Any,
 ) -> Dict[str, Any]:
-    with using_selected_keys(_normalize_list(kwargs.get("selected_keys"))):
-        return _run_metric_impl(
-            metric_name,
-            file_path,
-            file_type=file_type,
-            file_name=file_name,
-            save_images=save_images,
-            image_dir=image_dir,
-            verbose=verbose,
-            strip_visualizations=strip_visualizations,
-            session_id=session_id,
-            **kwargs,
-        )
+    from aidrin.file_handling.custom_loader import using_custom_loader
+
+    with using_custom_loader(kwargs.get("loader") or kwargs.get("data_loader")):
+        with using_selected_keys(_normalize_list(kwargs.get("selected_keys"))):
+            return _run_metric_impl(
+                metric_name,
+                file_path,
+                file_type=file_type,
+                file_name=file_name,
+                save_images=save_images,
+                image_dir=image_dir,
+                verbose=verbose,
+                strip_visualizations=strip_visualizations,
+                session_id=session_id,
+                **kwargs,
+            )
 
 
 def _run_metric_impl(
@@ -745,6 +851,15 @@ def _run_registry_metric(
         )
         return _finalize(result)
 
+    if metric_key == "variable_unit_validation":
+        result = metric["runner"](
+            file_path,
+            file_type,
+            file_name,
+            _resolve_unit_metadata(kwargs),
+        )
+        return _finalize(result)
+
     if metric_key == "feature_relevance":
         cat_columns = _normalize_list(kwargs.get("cat_columns")) or []
         num_columns = _normalize_list(kwargs.get("num_columns")) or []
@@ -825,7 +940,11 @@ def _run_registry_metric(
         epsilon = kwargs.get("epsilon")
         if not columns or epsilon is None:
             raise ValueError("columns and epsilon are required for differential_privacy")
-        result = metric["runner"](file_path, file_type, file_name, columns, epsilon)
+        result = metric["runner"](
+            file_path, file_type, file_name, columns, epsilon,
+            noisy_output=kwargs.get("noisy_output"),
+            save_noisy_output=not kwargs.get("skip_noisy_output", False),
+        )
         return _finalize(result)
 
     if metric_key == "hipaa_compliance":
@@ -877,12 +996,15 @@ def run_batch_metrics(
         "timestamp_column": config_obj.timestamp_column,
         "batch_column": config_obj.batch_column,
         "target_columns": config_obj.target_columns,
+        "loader": config_obj.loader,
         "selected_keys": config_obj.selected_keys,
         "path_targets": config_obj.path_targets,
         "base_dir": config_obj.base_dir,
         "max_results": config_obj.max_results,
         "scan_limit": config_obj.scan_limit,
         "target_match": config_obj.target_match,
+        "unit_metadata": config_obj.unit_metadata,
+        "unit_metadata_file": config_obj.unit_metadata_file,
         "save_images": bool(config_obj.save_images) if config_obj.save_images is not None else True,
         "image_dir": config_obj.image_dir,
         "verbose": verbose,
@@ -916,6 +1038,7 @@ def run_data_quality(
     file_name: Optional[str] = None,
     verbose: bool = False,
     strip_visualizations: bool = True,
+    loader: Optional[str] = None,
     selected_keys: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     """Run fast data quality metrics (completeness, duplicity, outliers).
@@ -929,6 +1052,7 @@ def run_data_quality(
             file_type=file_type,
             file_name=file_name,
             metrics=["completeness", "duplicity", "outliers"],
+            loader=loader,
             selected_keys=selected_keys or [],
             save_images=False,
         ),
@@ -967,6 +1091,128 @@ def run_privacy_assessment(
     return run_batch_metrics(config)
 
 
+def run_agentic_index(config_path: str) -> Dict[str, Any]:
+    """Build the FAISS vector index from domain-literature PDFs declared in an
+    agentic YAML config. Requires `pip install 'aidrin[agentic]'`."""
+    from aidrin.agentic.vector_db_builder import VectorDBBuilder
+
+    return VectorDBBuilder(Path(config_path).resolve()).build()
+
+
+def run_agentic_pipeline(
+    config_path: str,
+    output_path: Optional[str] = None,
+    skip_vector: bool = False,
+    verbose: bool = False,
+    **profiler_opts: Any,
+) -> Dict[str, Any]:
+    """Run the agentic evaluation pipeline: profile the dataset, build/reuse the
+    FAISS vector index, then for every question in the config retrieve context,
+    generate + self-heal analysis code, score complexity, and recommend
+    remediation. Requires `pip install 'aidrin[agentic]'`.
+
+    Writes the combined result to `output_path` when given; the saved path is
+    then returned under the `_saved_to` key. Nothing is written to disk
+    otherwise -- pass `output_path` (the CLI's `-o`) to save a copy.
+    """
+    import yaml
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    from aidrin.agentic.data_profiler import DataProfiler
+    from aidrin.agentic.run import _json_safe, _run_query
+    from aidrin.agentic.token_tracker import get_tracker
+    from aidrin.agentic.vector_db_builder import VectorDBBuilder
+
+    resolved = Path(config_path).resolve()
+    get_tracker().reset()
+
+    profiler = DataProfiler(config_path=resolved, **profiler_opts)
+    profile_result = profiler.profile()
+
+    cfg = yaml.safe_load(resolved.read_text()) if resolved.exists() else {}
+    cfg = cfg or {}
+
+    # Always rebuilds unless skip_vector -- matching --skip-vector's documented
+    # meaning ("use the existing index") rather than silently reusing a stale
+    # one just because a directory of that name happens to exist (e.g. new
+    # PDFs added to sources/ since the last build would otherwise go
+    # unindexed with no warning). A build failure is recorded, not fatal: the
+    # rest of the pipeline (profile, retrieval with whatever index already
+    # exists or none, execution, scoring, remediation) still runs rather than
+    # aborting the whole call over a step that's allowed to be skipped.
+    vector_result = None
+    if not skip_vector and cfg.get("vector_store"):
+        try:
+            builder = VectorDBBuilder(resolved)
+            vector_result = builder.build()
+        except Exception as exc:
+            vector_result = {"error": str(exc)}
+        _log_progress(json.dumps(vector_result), verbose)
+
+    retrieval_cfg = cfg.get("retrieval", {}) or {}
+    questions_raw = retrieval_cfg.get("questions") or []
+    if not questions_raw:
+        single = retrieval_cfg.get("question", "")
+        questions_raw = single if isinstance(single, list) else ([single] if single else [])
+
+    def _parse_q(q: Any) -> Any:
+        return (q["text"], q.get("loader")) if isinstance(q, dict) else (q, None)
+
+    parsed_questions = [_parse_q(q) for q in questions_raw]
+
+    # Precompute one profile per unique data_loader in use (dedup across questions
+    # that share a loader), sequentially, before any threads start. Reuses the
+    # profile already computed above for the default loader. Without this, every
+    # question would be scored against the default dataset's profile even when its
+    # own loader points at a different dataset.
+    default_loader = (cfg.get("paths", {}) or {}).get("data_loader")
+    profiles_by_loader: Dict[Any, Dict[str, Any]] = {default_loader: profile_result}
+    for _, loader in parsed_questions:
+        if loader in profiles_by_loader:
+            continue
+        try:
+            profiles_by_loader[loader] = profiler.profile(data_loader_override=loader)
+        except Exception as exc:
+            profiles_by_loader[loader] = {"error": str(exc)}
+
+    max_workers = int(retrieval_cfg.get("max_workers", 4))
+    query_results: List[Dict[str, Any]] = []
+    if parsed_questions:
+        with ThreadPoolExecutor(max_workers=min(max_workers, len(parsed_questions))) as pool:
+            futures = {
+                pool.submit(_run_query, resolved, text, profiles_by_loader[loader], loader): text
+                for text, loader in parsed_questions
+            }
+            for future in as_completed(futures):
+                try:
+                    query_results.append(future.result())
+                except Exception as exc:
+                    query_results.append({"question": futures[future], "error": str(exc)})
+
+    combined = _json_safe({
+        "profile": profile_result,
+        "vector_store": vector_result,
+        "queries": query_results,
+        "token_usage": get_tracker().to_dict(),
+    })
+
+    # Nothing is written to disk unless output_path is explicitly given. A
+    # disk-write failure (e.g. an unwritable -o path) must never discard a
+    # result that already reflects completed, paid-for LLM calls -- record
+    # the error and still return combined rather than letting the exception
+    # propagate and lose everything.
+    if output_path:
+        try:
+            out = Path(output_path).resolve()
+            out.parent.mkdir(parents=True, exist_ok=True)
+            out.write_text(json.dumps(combined, indent=2, ensure_ascii=False), encoding="utf-8")
+            combined["_saved_to"] = str(out)
+        except OSError as exc:
+            combined["_save_error"] = str(exc)
+
+    return combined
+
+
 def generate_metric_template(metric_name: str, target_dir: str) -> str:
     """Creates the directory and the .py file with the CustomDR template."""
     # 1. Prepare directory
@@ -989,6 +1235,61 @@ def generate_metric_template(metric_name: str, target_dir: str) -> str:
     with open(file_path, "w") as f:
         f.write(CUSTOM_DR_TEMPLATE)
 
+    return file_path
+
+
+_LOADER_TEMPLATE = '''"""Custom AIDRIN data loader.
+
+Return a pandas DataFrame from any format your environment can read.
+AIDRIN does not install domain libraries for you (e.g. uproot, xarray).
+
+Trusted scripts only: this code runs in-process with full Python access.
+"""
+
+from __future__ import annotations
+
+import pandas as pd
+
+
+def load(path: str, **kwargs) -> pd.DataFrame:
+    """Load ``path`` into a tabular DataFrame for AIDRIN metrics.
+
+    ``kwargs`` may include ``selected_keys`` when the caller passes them.
+    Multi-dimensional arrays must be reshaped here; AIDRIN will not average
+    or flatten them for you.
+    """
+    # Example (CSV):
+    # return pd.read_csv(path)
+
+    # Example (ROOT via uproot — install uproot yourself):
+    # import uproot
+    # with uproot.open(path) as f:
+    #     tree = f[kwargs.get("tree", "tree")]
+    #     return tree.arrays(library="pd")
+
+    raise NotImplementedError("Implement load() to return a pandas DataFrame")
+'''
+
+
+def generate_loader_template(loader_name: str, target_dir: str) -> str:
+    """Create a custom data-loader template ``load(path, **kwargs) -> DataFrame``."""
+    if not os.path.exists(target_dir):
+        os.makedirs(target_dir)
+
+    clean_name = loader_name.strip().lower().replace(" ", "_")
+    clean_name = re.sub(r"[^a-z0-9_]+", "", clean_name)
+    if not clean_name:
+        raise ValueError("loader name must contain at least one alphanumeric character")
+    file_path = os.path.join(target_dir, f"{clean_name}.py")
+
+    if os.path.exists(file_path):
+        raise FileExistsError(
+            f"A loader file named '{clean_name}.py' already exists in {target_dir}. "
+            "Edit that file or choose a different name."
+        )
+
+    with open(file_path, "w", encoding="utf-8") as handle:
+        handle.write(_LOADER_TEMPLATE)
     return file_path
 
 
@@ -1106,14 +1407,19 @@ def run_custom_metric_remedy(
     output_dir: Optional[str] = None,
     file_type: Optional[str] = None,
     file_name: Optional[str] = None,
+    diff: bool = False,
     **kwargs,
-) -> str:
+) -> Any:
     """Execute `remedy` on a custom metric and save the returned DataFrame as CSV.
 
     The input dataset may be any format supported by file_handling/readers/
     (CSV, Excel, JSON, NPZ, HDF5, Parquet); the remedied output is always
     written as CSV, since remediated data doesn't round-trip losslessly back
     into every original format (e.g. JSON/NPZ/HDF5 are flattened on read).
+
+    Returns the saved CSV path (str) by default. When `diff` is true, instead
+    re-runs `metric()` on the remedied data and returns
+    `{"before": ..., "after": ..., "_saved_to": <path>}`.
     """
     script_path = _resolve_custom_script(metric_name)
     clean_name = os.path.splitext(os.path.basename(script_path))[0]
@@ -1173,4 +1479,15 @@ def run_custom_metric_remedy(
     output_path = os.path.join(target_dir, filename)
     remedied.to_csv(output_path, index=False)
 
-    return output_path
+    if not diff:
+        return output_path
+
+    after_agent = module.CustomDR(dataset=remedied, **kwargs)
+    _log_progress(f"Re-running metric on remedied data for: {metric_name}", kwargs.get("verbose", False))
+    after_results = after_agent.metric(**kwargs)
+    if not isinstance(after_results, dict):
+        raise TypeError(
+            f"metric() in '{script_path}' must return a dict, got {type(after_results).__name__}"
+        )
+
+    return {"before": metric_results, "after": after_results, "_saved_to": output_path}

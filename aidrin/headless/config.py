@@ -46,12 +46,15 @@ class HeadlessConfig:
     timestamp_column: Optional[str] = None
     batch_column: Optional[str] = None
     target_columns: Optional[List[str]] = field(default_factory=list)
+    loader: Optional[str] = None
     selected_keys: Optional[List[str]] = field(default_factory=list)
     path_targets: Optional[List[str]] = field(default_factory=list)
     base_dir: Optional[str] = None
     max_results: Optional[int] = 100
     scan_limit: Optional[int] = None
     target_match: str = "exact"
+    unit_metadata: Optional[Dict[str, Any]] = None
+    unit_metadata_file: Optional[str] = None
     save_images: Optional[bool] = None
     image_dir: Optional[str] = None
 
@@ -81,11 +84,15 @@ class HeadlessConfig:
             "max-results": "max_results",
             "scan-limit": "scan_limit",
             "target-match": "target_match",
+            "unit-metadata": "unit_metadata",
+            "unit-metadata-file": "unit_metadata_file",
             "file-path": "file_path",
             "file-type": "file_type",
             "file-name": "file_name",
             "image-dir": "image_dir",
             "save-images": "save_images",
+            "data-loader": "loader",
+            "loader": "loader",
             "selected-keys": "selected_keys",
         }
 

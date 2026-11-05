@@ -43,6 +43,20 @@ SUPPORTED_FILE_TYPES = [
     # (file_type,file_type_name)
 ]
 
+# Extra extensions the browser file dialog should offer for a given type. The
+# READER_MAP key stays canonical (".h5"), so nothing downstream changes; these
+# are only the other spellings the same format is published under. HDF5 ships as
+# both ".h5" and ".hdf5", and an accept filter of ".h5" alone greys the other out.
+FILE_TYPE_ACCEPT_EXTENSIONS = {
+    ".h5": ".h5,.hdf5",
+}
+
+
+def accept_extensions_for(file_type):
+    """Browser ``accept`` value for a supported file type."""
+    return FILE_TYPE_ACCEPT_EXTENSIONS.get(file_type, file_type)
+
+
 # Globus (and other path-based surfaces) may include directory-shaped formats
 # that are not offered in the local browser upload dropdown.
 GLOBUS_FILE_TYPES = SUPPORTED_FILE_TYPES + [
@@ -62,9 +76,10 @@ class ReaderReturnedNone(RuntimeError):
 
 
 # Formats whose readers legitimately refuse ambiguous inputs (a multi-array
-# Zarr store needing selected_keys). Returning None there is indistinguishable
-# from "unsupported type", so raise instead and let the CLI print one error.
-_RAISE_ON_EMPTY_FILE_TYPES = {".zarr"}
+# HDF5/Zarr store needing selected_keys). Returning None there is
+# indistinguishable from "unsupported type", so raise instead and let the
+# CLI print one error.
+_RAISE_ON_EMPTY_FILE_TYPES = {".h5", ".zarr"}
 
 # logger config
 file_upload_time_log = logging.getLogger("file_upload")
@@ -214,7 +229,30 @@ def filter_file(file_info, kept_keys):
 # Parses the uploaded file into a pandas database
 
 
-def read_file(file_info, columns=None):
+def _unpack_file_info_extras(file_info):
+    """Extract optional ``selected_keys`` / custom-loader extras from ``file_info``.
+
+    Celery workers have no Flask session, so the web layer may embed:
+      ``(path, name, type, selected_keys)``
+      ``(path, name, type, loader_spec)``
+      ``(path, name, type, selected_keys, loader_spec)``
+
+    ``selected_keys`` is a list when present. A trailing ``path.py:function``
+    string is treated as the custom loader spec.
+    """
+    selected_keys = None
+    embedded_loader = None
+    extras = list(file_info[3:]) if len(file_info) > 3 else []
+    if not extras:
+        return None, None
+    if isinstance(extras[-1], str) and ":" in extras[-1]:
+        embedded_loader = extras.pop()
+    if extras:
+        selected_keys = extras[0]
+    return selected_keys, embedded_loader
+
+
+def read_file(file_info, columns=None, loader=None):
     """
 
     Parses a given file into pandas Dataframe.
@@ -234,22 +272,29 @@ def read_file(file_info, columns=None):
             - optional selected_keys (4th element) for HDF5/Zarr path selection.
     columns: list of str, optional
         When given, only these columns are returned.
+    loader: str, optional
+        Custom loader spec ``path.py:function``. When set (or present in the
+        headless/Flask loader context), skips built-in readers.
     Returns
     ----------
     pd.Dataframe, None, or str
-    Parsed data as a DataFrame, None if the file is unsupported or the reader
-    produced no frame, or an error message string if an exception occurs.
-
-    Raises
-    ----------
-    ReaderReturnedNone
-        For formats in ``_RAISE_ON_EMPTY_FILE_TYPES`` (Zarr), where an empty
-        read means the caller must supply ``selected_keys``.
+    Parsed data as a DataFrame, None if file is unsupported,
+    or error message string if an exception occurs.
+    Raises ``CustomLoaderError`` when an active custom loader fails.
+    For Zarr, an empty read raises ``ReaderReturnedNone`` so callers can
+    supply ``selected_keys``.
     """
+    from aidrin.file_handling.custom_loader import (
+        CustomLoaderError,
+        _format_loader_failure,
+        get_active_loader_spec,
+        load_dataframe,
+    )
+
     file_upload_time_log.info("File parsing initiated...")
 
     file_path, file_name, file_type = file_info[:3]
-    selected_keys = file_info[3] if len(file_info) > 3 else None
+    selected_keys, embedded_loader = _unpack_file_info_extras(file_info)
     # path and name are passed from flask, if not in session = None
     if not file_path and file_name:
         file_upload_time_log.error("Missing file path or file name.")
@@ -259,6 +304,31 @@ def read_file(file_info, columns=None):
     if file_path and not os.path.exists(file_path):
         file_upload_time_log.error(f"File not found: {file_path}")
         return f"File not found: {file_path}"
+
+    # Prefer an explicit/context loader; fall back to a spec embedded in
+    # file_info (Celery has no Flask session, so the web layer packs it there).
+    loader_spec = get_active_loader_spec(loader) or embedded_loader
+    if loader_spec:
+        try:
+            kwargs = {}
+            if selected_keys is not None:
+                kwargs["selected_keys"] = selected_keys
+            df = load_dataframe(loader_spec, file_path, **kwargs)
+            file_upload_time_log.info("File loaded via custom loader: %s", loader_spec)
+            if columns is not None:
+                df = df[columns]
+            return df
+        except CustomLoaderError as exc:
+            # Raise so CLI/library/web never treat a loader failure as a silent miss.
+            file_upload_time_log.error("%s", exc, exc_info=True)
+            raise
+        except Exception as e:
+            file_upload_time_log.error(
+                "Unexpected custom loader error: %s", e, exc_info=True
+            )
+            raise CustomLoaderError(
+                _format_loader_failure(loader_spec, file_path, f"{type(e).__name__}: {e}")
+            ) from e
 
     if file_type not in READER_MAP:
         file_upload_time_log.warning(f"Unsupported file type: {file_type}")
@@ -285,11 +355,10 @@ def read_file(file_info, columns=None):
         # Slow path: parse the source once.
         reader_cls = READER_MAP[file_type]
         if file_type in _SELECTION_FILE_TYPES:
-            df = reader_cls(
-                file_path, file_upload_time_log, selected_keys=selected_keys
-            ).read()
+            reader = reader_cls(file_path, file_upload_time_log, selected_keys=selected_keys)
         else:
-            df = reader_cls(file_path, file_upload_time_log).read()
+            reader = reader_cls(file_path, file_upload_time_log)
+        df = reader.read()
         file_upload_time_log.info("File successfully parsed!")
 
         # If a reader returns None (for example an invalid Zarr store/path or
@@ -300,9 +369,24 @@ def read_file(file_info, columns=None):
                 f"Reader returned no DataFrame for {file_path}. "
                 "Check the store/path or selected keys; reader returned None."
             )
+            if file_type in _RAISE_ON_EMPTY_FILE_TYPES and hasattr(reader, "inventory"):
+                # Name the layout and point at the command that shows it, so
+                # the caller doesn't have to guess why an ambiguous multi-array
+                # store refused to flatten into one table.
+                layout = reader.inventory().get("type")
+                if layout == "multi_dataset":
+                    msg = (
+                        f"{file_type} store '{file_path}' has layout 'multi_dataset' "
+                        "and needs an explicit dataset selection. Run "
+                        f"`aidrin inventory {file_path}` to see the dataset/array "
+                        "list, then pass --selected-keys (CLI) or "
+                        "selected_keys=[...] (library) with compatible paths."
+                    )
+                elif layout == "empty":
+                    msg = f"{file_type} store '{file_path}' has no readable datasets/arrays."
             file_upload_time_log.error(msg)
-            # For Zarr stores, prefer raising so the CLI/runner prints a single
-            # clear error and exits non-zero.
+            # For HDF5/Zarr stores, prefer raising so the CLI/runner prints a
+            # single clear error and exits non-zero.
             if file_type in _RAISE_ON_EMPTY_FILE_TYPES:
                 raise ReaderReturnedNone(msg)
             # Every other format keeps returning None, which callers already
